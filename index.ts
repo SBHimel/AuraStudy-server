@@ -654,6 +654,8 @@ app.get("/test-himel-123", (req: Request, res: Response) => {
 app.get("/", (req: Request, res: Response) => {
   res.send("AuraStudy TypeScript is running !");
 });
+
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
+
