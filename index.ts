@@ -33,9 +33,6 @@ const uri: string | undefined = process.env.MONGODB_URI;
 const PORT: string | number = process.env.PORT || 5000;
 const clientUrl: string = process.env.CLIENT_URL || "http://localhost:3000";
 
-
-
-
 if (!uri) {
   throw new Error('Invalid/Missing environment variable: "MONGODB_URI"');
 }
@@ -116,53 +113,54 @@ const instructorVerify = async (
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
 
     // Database Name changed to AuraStudy
     const db: Db = client.db("AuraStudy");
     const usersCollection: Collection = db.collection("users");
     const coursesCollection: Collection = db.collection("courses");
     const enrollmentsCollection: Collection = db.collection("enrollments");
+    const chatSessionsCollection: Collection = db.collection("chatSessions");
 
     // AI Chat Assistant API
     // AI Chat Assistant API
     app.post("/api/chat", async (req: Request, res: Response) => {
-  try {
-    console.log("=== /api/chat called ===");
-    console.log(req.body);
+      try {
+        console.log("=== /api/chat called ===");
+        console.log(req.body);
 
-    const { messages } = req.body;
+        const { messages } = req.body;
 
-    let courseContext = "";
+        let courseContext = "";
 
-    try {
-      const courses = await coursesCollection
-        .find(
-          {},
-          {
-            projection: {
-              title: 1,
-              price: 1,
-              category: 1,
-            },
-          },
-        )
-        .toArray();
+        try {
+          const courses = await coursesCollection
+            .find(
+              {},
+              {
+                projection: {
+                  title: 1,
+                  price: 1,
+                  category: 1,
+                },
+              },
+            )
+            .toArray();
 
-      courseContext = courses
-        .map(
-          (course) =>
-            `- ${course.title} (${course.category}) - Price: $${course.price}`,
-        )
-        .join("\n");
-    } catch (dbError) {
-      console.error("Database Error:", dbError);
-    }
+          courseContext = courses
+            .map(
+              (course) =>
+                `- ${course.title} (${course.category}) - Price: $${course.price}`,
+            )
+            .join("\n");
+        } catch (dbError) {
+          console.error("Database Error:", dbError);
+        }
 
-    const result = streamText({
-      model: openrouter("openai/gpt-oss-20b:free"),
+        const result = streamText({
+          model: openrouter("openai/gpt-oss-20b:free"),
 
-      system: `
+          system: `
 তুমি AuraStudy-এর একজন বন্ধুসুলভ AI স্টাডি অ্যাসিস্ট্যান্ট।
 
 তুমি ইউজারকে সাহায্য করবে:
@@ -176,22 +174,83 @@ Available Courses:
 ${courseContext}
       `,
 
-      messages: await convertToModelMessages(messages),
+          messages: await convertToModelMessages(messages),
+        });
+
+        return result.pipeUIMessageStreamToResponse(res);
+      } catch (error: any) {
+        console.error("Chat API Error:", error);
+
+        if (!res.headersSent) {
+          return res.status(500).json({
+            error: error.message ?? "Internal Server Error",
+          });
+        }
+      }
     });
 
-    return result.pipeUIMessageStreamToResponse(res);
-  } catch (error: any) {
-    console.error("Chat API Error:", error);
+    // AI Study Roadmap Generator API (Feature A)
+    // AI Study Roadmap Generator API (Feature A)
+    app.post("/api/roadmap", async (req: Request, res: Response) => {
+      try {
+        console.log("=== /api/roadmap called ===");
+        const { prompt, length } = req.body;
 
-    if (!res.headersSent) {
-      return res.status(500).json({
-        error: error.message ?? "Internal Server Error",
-      });
-    }
-  }
-});
+        console.log("User Prompt:", prompt, "| Length:", length);
 
+        if (!prompt) {
+          console.log("❌ Error: No prompt found in req.body");
+          return res.status(400).json({ error: "Prompt is required" });
+        }
 
+        // Output Length অনুযায়ী AI-এর জন্য ইন্সট্রাকশন
+        let lengthInstruction = "";
+        if (length === "short") {
+          lengthInstruction = "রোডম্যাপটি খুব সংক্ষেপ (Short) এবং মূল পয়েন্টগুলোকে ফোকাস করে ৩-৪টি ধাপে উপস্থাপন করো।";
+        } else if (length === "detailed") {
+          lengthInstruction = "রোডম্যাপটি অত্যন্ত বিস্তারিত (Highly Detailed) করো, যেখানে প্রতিটি সপ্তাহের জন্য সাব-টপিক, রিসোর্স পরামর্শ এবং টিপস থাকবে।";
+        } else {
+          lengthInstruction = "রোডম্যাপটি স্ট্যান্ডার্ড (Medium Length) ও সামঞ্জস্যপূর্ণভাবে তৈরি করো।";
+        }
+
+        console.log("⏳ Calling OpenRouter API...");
+        const result = streamText({
+          model: openrouter("openai/gpt-oss-20b:free"),
+          system: `তুমি একজন এক্সপার্ট টেকনিক্যাল মেন্টর। 
+ইউজারের লক্ষ্যের ওপর ভিত্তি করে একটি প্র্যাকটিক্যাল স্টাডি রোডম্যাপ তৈরি করো।
+
+দৈর্ঘ্যের নির্দেশিকা: ${lengthInstruction}
+
+রোডম্যাপটি অবশ্যই Markdown ফরম্যাটে হবে, যেখানে সুন্দরভাবে হেডিং (##), বুলেট পয়েন্ট, এবং টিপস থাকবে।`,
+          prompt: `স্টাডি গোল: ${prompt}`,
+        });
+
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        res.setHeader("Transfer-Encoding", "chunked");
+
+        let isFirstChunk = true;
+
+        for await (const chunk of result.textStream) {
+          if (isFirstChunk) {
+            console.log("🚀 OpenRouter থেকে ডেটা আসা শুরু হয়েছে...");
+            isFirstChunk = false;
+          }
+          res.write(chunk);
+        }
+
+        console.log("✅ Roadmap streaming successfully completed!");
+        res.end();
+      } catch (error: any) {
+        console.error("❌ Roadmap API Error:", error.message);
+        if (!res.headersSent) {
+          return res.status(500).json({
+            error: error.message ?? "Internal Server Error",
+          });
+        } else {
+          res.end();
+        }
+      }
+    });
 
     // Route: Instructor der notun course add korar API
     app.post(
@@ -577,7 +636,7 @@ ${courseContext}
       res.send("THIS IS MY SERVER");
     });
 
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
     console.log(
       "⚡ Pinged your deployment. Connected safely to MongoDB Atlas!",
     );
@@ -591,7 +650,6 @@ run().catch(console.dir);
 app.get("/test-himel-123", (req: Request, res: Response) => {
   res.send("THIS IS MY SERVER");
 });
-
 
 app.get("/", (req: Request, res: Response) => {
   res.send("AuraStudy TypeScript is running !");
